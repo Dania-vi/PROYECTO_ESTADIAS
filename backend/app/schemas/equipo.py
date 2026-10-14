@@ -1,28 +1,17 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
-# Esquema utilizado para recibir los datos
-# necesarios para registrar un nuevo equipo.
+# Esquema para registrar un equipo nuevo.
 class EquipoCreate(BaseModel):
+    # Debe indicar una sucursal existente; el ID debe ser positivo.
+    sucursal_id: int = Field(gt=0)
 
-    # Identificador de la sucursal a la que pertenece el equipo.
-    # Este valor debe corresponder a una sucursal existente.
-    sucursal_id: int
+    # El nombre es obligatorio y respeta el tamaño de la columna.
+    nombre: str = Field(min_length=1, max_length=80)
 
-    # Nombre o identificador del equipo.
-    nombre: str
-
-    # Tipo de equipo, por ejemplo: computadora, caja, impresora, etc.
-    tipo_equipo: str | None = None
-
-    # Marca del equipo.
-    marca: str | None = None
-
-    # Modelo del equipo.
-    modelo: str | None = None
-
-    # Número de serie del equipo.
-    numero_serie: str | None = None
-
-    # Estado actual del equipo.
-    estado: str | None = None
+    # Los campos opcionales respetan los tamaños definidos en la base de datos.
+    tipo_equipo: str | None = Field(default=None, max_length=50)
+    marca: str | None = Field(default=None, max_length=50)
+    modelo: str | None = Field(default=None, max_length=50)
+    numero_serie: str | None = Field(default=None, max_length=80)
+    estado: str | None = Field(default=None, max_length=30)

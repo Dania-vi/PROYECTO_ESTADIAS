@@ -1,19 +1,13 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
-# Esquema utilizado para recibir los datos
-# necesarios para registrar una nueva sucursal.
+# Esquema para recibir los datos de una sucursal nueva.
 class SucursalCreate(BaseModel):
+    # El nombre es obligatorio y debe respetar el tamaño de la columna.
+    nombre: str = Field(min_length=1, max_length=100)
 
-    # Nombre de la sucursal.
-    nombre: str
-
-    # Dirección física de la sucursal.
     direccion: str | None = None
+    telefono: str | None = Field(default=None, max_length=20)
 
-    # Teléfono de la sucursal.
-    telefono: str | None = None
-
-    # Indica si la sucursal se encuentra activa.
-    # Por defecto se considera activa.
+    # Por defecto, la sucursal se considera activa.
     activo: bool = True

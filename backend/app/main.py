@@ -6,6 +6,28 @@ from app.database.dependencies import get_db
 from app.api.sucursales import router as sucursales_router
 from app.api.equipos import router as equipos_router
 
+# Importa las rutas para consultar y registrar técnicos.
+from app.api.tecnicos import router as tecnicos_router
+
+# Importa las rutas para consultar y registrar servidores.
+from app.api.servidores import router as servidores_router
+
+
+# Importa las rutas para registrar y consultar métricas de los servidores.
+from app.api.metricas_servidor import router as metricas_servidor_router
+
+
+# Importa las rutas para registrar y consultar respaldos.
+from app.api.respaldos import router as respaldos_router
+
+
+# Importa las rutas para registrar y consultar alertas.
+from app.api.alertas import router as alertas_router
+
+
+# Importa las rutas para consultar y registrar mantenimientos.
+from app.api.mantenimientos import router as mantenimientos_router
+
 
 # Creacion de la aplicacion principal de FastAPI
 # Desde aqui se comienzan a conectar las diferentes partes del backend
@@ -23,6 +45,30 @@ app.include_router(sucursales_router)
 
 # Registra las rutas relacionadas con los equipos.
 app.include_router(equipos_router)
+
+# Habilita las rutas del módulo de técnicos.
+app.include_router(tecnicos_router)
+
+# Habilita las rutas del módulo de servidores.
+app.include_router(servidores_router)
+
+
+# Habilita las rutas del módulo de métricas de servidores.
+app.include_router(metricas_servidor_router)
+
+
+# Habilita las rutas del módulo de respaldos.
+app.include_router(respaldos_router)
+
+
+# Habilita las rutas del módulo de alertas.
+app.include_router(alertas_router)
+
+
+# Habilita las rutas del módulo de mantenimientos.
+app.include_router(mantenimientos_router)
+
+
 
 
 # Esta ruta sirve como prueba para comprobar que el servidor

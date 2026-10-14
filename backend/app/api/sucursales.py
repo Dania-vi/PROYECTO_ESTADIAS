@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.database.dependencies import get_db
 from app.models.sucursal import Sucursal
 from app.schemas.sucursal import SucursalCreate
 
 
-# Router para agrupar los endpoints relacionados
-# con las sucursales.
+# Router para agrupar los endpoints relacionados con las sucursales.
 router = APIRouter(
     prefix="/api/sucursales",
     tags=["Sucursales"]
@@ -21,8 +22,7 @@ def obtener_sucursales(db: Session = Depends(get_db)):
     # Consulta todos los registros de la tabla sucursales.
     sucursales = db.query(Sucursal).all()
 
-    # Convierte los registros de SQLAlchemy en datos
-    # que FastAPI puede devolver como respuesta JSON.
+    # Convierte los registros de SQLAlchemy en datos JSON.
     return [
         {
             "id": sucursal.id,
@@ -42,8 +42,7 @@ def crear_sucursal(
     db: Session = Depends(get_db)
 ):
 
-    # Crea un objeto Sucursal utilizando los datos
-    # recibidos y validados por Pydantic.
+    # Crea el objeto con los datos recibidos y validados.
     nueva_sucursal = Sucursal(
         nombre=sucursal_data.nombre,
         direccion=sucursal_data.direccion,
@@ -51,16 +50,28 @@ def crear_sucursal(
         activo=sucursal_data.activo
     )
 
-    # Agrega la nueva sucursal a la sesión.
+    # Agrega la nueva sucursal a la sesión de SQLAlchemy.
     db.add(nueva_sucursal)
 
-    # Confirma la operación para guardar el registro
-    # permanentemente en PostgreSQL.
-    db.commit()
+    try:
+        # Guarda permanentemente el registro en PostgreSQL.
+        db.commit()
 
-    # Actualiza el objeto con el ID generado automáticamente
-    # por PostgreSQL.
-    db.refresh(nueva_sucursal)
+        # Recupera el ID generado automáticamente por PostgreSQL.
+        db.refresh(nueva_sucursal)
+
+    except IntegrityError:
+        # Revierte la transacción si se incumple una restricción.
+        db.rollback()
+
+        # Devuelve un error controlado en lugar de un error interno 500.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No se pudo registrar la sucursal. "
+                "Verifica que los datos sean válidos."
+            )
+        )
 
     # Devuelve los datos de la sucursal recién creada.
     return {
