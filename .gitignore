@@ -14,3 +14,6 @@ __pycache__/
 # Archivos del sistema
 .DS_Store
 Thumbs.db
+# Cola local de metricas pendientes del agente
+agente_monitoreo/metricas_pendientes.jsonl
+ echo # Cola local de metricas pendientes del agente echo agente_monitoreo/metricas_pendientes.jsonl
