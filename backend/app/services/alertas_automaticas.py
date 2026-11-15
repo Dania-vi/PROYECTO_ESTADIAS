@@ -1,9 +1,59 @@
 
+# Permite leer las variables de configuración del sistema.
+import os
+
+# Carga las variables definidas en el archivo .env.
+from dotenv import load_dotenv
+
 # Importa la sesión para consultar y guardar información en PostgreSQL.
 from sqlalchemy.orm import Session
 
 # Importa el modelo de las alertas.
 from app.models.alerta import Alerta
+
+
+# Carga las variables de entorno del proyecto.
+load_dotenv()
+
+
+# Obtiene los umbrales de advertencia desde el archivo .env.
+# Si alguna variable no existe, utiliza el valor predeterminado.
+UMBRAL_CPU = float(os.getenv("ALERT_CPU", "70"))
+UMBRAL_RAM = float(os.getenv("ALERT_RAM", "80"))
+UMBRAL_DISCO = float(os.getenv("ALERT_DISK", "80"))
+
+# Define el umbral crítico para las tres métricas.
+UMBRAL_PROBLEMA = 90
+
+
+def obtener_nivel_alerta(
+    valor_actual: float | None,
+    umbral_advertencia: float,
+    umbral_problema: float = UMBRAL_PROBLEMA,
+):
+    """
+    Determina el nivel de alerta según el valor de una métrica.
+
+    Devuelve:
+    - None si el valor está dentro del rango normal.
+    - Advertencia si supera el umbral de advertencia.
+    - Problema si supera el umbral crítico.
+    """
+
+    # Si no existe un valor, no se genera una clasificación.
+    if valor_actual is None:
+        return None
+
+    # Comprueba primero si se alcanzó el nivel crítico.
+    if valor_actual > umbral_problema:
+        return "Problema"
+
+    # Comprueba si se superó el umbral de advertencia.
+    if valor_actual > umbral_advertencia:
+        return "Advertencia"
+
+    # Si no supera ningún límite, el estado es normal.
+    return None
 
 
 def revisar_metricas_y_generar_alertas(
@@ -13,20 +63,20 @@ def revisar_metricas_y_generar_alertas(
     metricas_anteriores: dict | None = None,
 ):
     """
-    Revisa las métricas y prepara alertas cuando se superan los límites.
+    Revisa las métricas actuales y genera alertas cuando cambia su nivel.
 
     Compara las mediciones actuales con las anteriores para evitar
-    repetir una alerta mientras el mismo problema continúa activo.
+    repetir alertas mientras una misma condición continúa activa.
     """
 
     # Si no hay una medición anterior, se considera la primera revisión.
     if metricas_anteriores is None:
         metricas_anteriores = {}
 
-    # Aquí se almacenarán las alertas que deban crearse.
+    # Aquí se almacenarán los datos de las alertas que deben generarse.
     alertas_generadas = []
 
-    # Obtiene los valores actuales y anteriores de CPU, RAM y disco.
+    # Obtiene los valores actuales y anteriores de las métricas.
     cpu = metricas.get("cpu_uso_porcentaje")
     cpu_anterior = metricas_anteriores.get("cpu_uso_porcentaje")
 
@@ -39,47 +89,57 @@ def revisar_metricas_y_generar_alertas(
     internet = metricas.get("internet_activo")
     internet_anterior = metricas_anteriores.get("internet_activo")
 
-    # Comprueba si la CPU acaba de superar el umbral del 85 %.
-    if (
-        cpu is not None
-        and cpu > 85
-        and (cpu_anterior is None or cpu_anterior <= 85)
-    ):
+    # Clasifica el nivel actual y anterior de cada métrica.
+    nivel_cpu = obtener_nivel_alerta(cpu, UMBRAL_CPU)
+    nivel_cpu_anterior = obtener_nivel_alerta(cpu_anterior, UMBRAL_CPU)
+
+    nivel_ram = obtener_nivel_alerta(ram, UMBRAL_RAM)
+    nivel_ram_anterior = obtener_nivel_alerta(ram_anterior, UMBRAL_RAM)
+
+    nivel_disco = obtener_nivel_alerta(disco, UMBRAL_DISCO)
+    nivel_disco_anterior = obtener_nivel_alerta(
+        disco_anterior,
+        UMBRAL_DISCO
+    )
+
+    # Comprueba si la CPU cambió a Advertencia o Problema.
+    if nivel_cpu is not None and nivel_cpu != nivel_cpu_anterior:
         alertas_generadas.append({
             "metrica_afectada": "CPU",
             "valor_registrado": f"{cpu}%",
-            "nivel_alerta": "Advertencia",
-            "mensaje": f"El uso de CPU superó el umbral del 85 %: {cpu}%.",
+            "nivel_alerta": nivel_cpu,
+            "mensaje": (
+                f"El uso de CPU alcanzó el nivel {nivel_cpu}: "
+                f"{cpu}%. Umbral de advertencia: {UMBRAL_CPU}%."
+            ),
         })
 
-    # Comprueba si la RAM acaba de superar el umbral del 90 %.
-    if (
-        ram is not None
-        and ram > 90
-        and (ram_anterior is None or ram_anterior <= 90)
-    ):
+    # Comprueba si la RAM cambió a Advertencia o Problema.
+    if nivel_ram is not None and nivel_ram != nivel_ram_anterior:
         alertas_generadas.append({
             "metrica_afectada": "RAM",
             "valor_registrado": f"{ram}%",
-            "nivel_alerta": "Advertencia",
-            "mensaje": f"El uso de RAM superó el umbral del 90 %: {ram}%.",
+            "nivel_alerta": nivel_ram,
+            "mensaje": (
+                f"El uso de RAM alcanzó el nivel {nivel_ram}: "
+                f"{ram}%. Umbral de advertencia: {UMBRAL_RAM}%."
+            ),
         })
 
-    # Comprueba si el disco acaba de superar el 90 % de uso.
-    # Esto equivale a tener menos del 10 % de espacio libre.
-    if (
-        disco is not None
-        and disco > 90
-        and (disco_anterior is None or disco_anterior <= 90)
-    ):
-        # Calcula el porcentaje libre, incluso si el disco está al 100 %.
+    # Comprueba si el disco cambió a Advertencia o Problema.
+    if nivel_disco is not None and nivel_disco != nivel_disco_anterior:
+
+        # Calcula el porcentaje de espacio libre.
         espacio_libre = max(0, 100 - disco)
 
         alertas_generadas.append({
             "metrica_afectada": "Disco",
             "valor_registrado": f"{espacio_libre:.2f}% libre",
-            "nivel_alerta": "Advertencia",
-            "mensaje": "El espacio libre en disco es inferior al 10 %.",
+            "nivel_alerta": nivel_disco,
+            "mensaje": (
+                f"El uso del disco alcanzó el nivel {nivel_disco}: "
+                f"{disco}%. Espacio libre: {espacio_libre:.2f}%."
+            ),
         })
 
     # Genera una alerta cuando se pierde la conexión a Internet.

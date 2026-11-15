@@ -8,6 +8,9 @@ import { RouterLink } from 'vue-router'
 const menuItems = [
   { name: 'Dashboard', path: '/', icon: '📊' },
   { name: 'Servidores', path: '/servidores', icon: '🖥️' },
+  { name: 'Sucursales', path: '/sucursales', icon: '🏢' },
+  { name: 'Equipos', path: '/equipos', icon: '💻' },
+  { name: 'Técnicos', path: '/tecnicos', icon: '👨‍🔧' },
   { name: 'Alertas', path: '/alertas', icon: '🔔' },
   { name: 'Historial', path: '/historial', icon: '📋' },
   { name: 'Mantenimientos', path: '/mantenimientos', icon: '🛠️' },
@@ -37,12 +40,18 @@ const menuItems = [
         v-for="item in menuItems"
         :key="item.path"
         :to="item.path"
-        class="nav-link"
-        active-class="active"
-        :exact-active-class="item.path === '/' ? 'active' : ''"
+        custom
+        v-slot="{ href, navigate, isActive, isExactActive }"
       >
-        <span class="nav-icon">{{ item.icon }}</span>
-        <span>{{ item.name }}</span>
+        <a
+          :href="href"
+          class="nav-link"
+          :class="{ active: item.path === '/' ? isExactActive : isActive }"
+          @click="navigate"
+        >
+          <span class="nav-icon">{{ item.icon }}</span>
+          <span>{{ item.name }}</span>
+        </a>
       </RouterLink>
     </nav>
 

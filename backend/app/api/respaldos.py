@@ -1,25 +1,88 @@
+
+# Importamos las herramientas necesarias de FastAPI.
 from fastapi import APIRouter, Depends, HTTPException
+
+# Importamos la sesión de SQLAlchemy y el error de integridad.
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
+# Importamos la dependencia para conectarnos a PostgreSQL.
 from app.database.dependencies import get_db
+
+# Importamos los modelos necesarios.
 from app.models.respaldo import Respaldo
+from app.models.equipo import Equipo
+from app.models.servidor import Servidor
+
+# Importamos el esquema de validación.
 from app.schemas.respaldo import RespaldoCreate
 
+# Importamos el servicio que ejecuta los respaldos automáticos.
+from app.services.respaldos_automaticos import ejecutar_respaldo_postgres
 
-# Define las rutas de la API relacionadas con los respaldos.
+
+# ==========================================================
+# CONFIGURACIÓN DEL ROUTER
+# ==========================================================
+
+# Creamos el router para administrar los respaldos.
 router = APIRouter(
     prefix="/api/respaldos",
     tags=["Respaldos"]
 )
 
 
-# Consulta todos los respaldos registrados.
+# ==========================================================
+# VALIDAR EQUIPO
+# ==========================================================
+
+def validar_equipo(equipo_id: int, db: Session):
+    # Buscamos el equipo por su identificador.
+    equipo = db.query(Equipo).filter(
+        Equipo.id == equipo_id
+    ).first()
+
+    # Comprobamos que el equipo exista.
+    if equipo is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró el equipo seleccionado."
+        )
+
+    return equipo
+
+
+# ==========================================================
+# VALIDAR SERVIDOR
+# ==========================================================
+
+def validar_servidor(servidor_id: int, db: Session):
+    # Buscamos el servidor por su identificador.
+    servidor = db.query(Servidor).filter(
+        Servidor.id == servidor_id
+    ).first()
+
+    # Comprobamos que el servidor exista.
+    if servidor is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró el servidor seleccionado."
+        )
+
+    return servidor
+
+
+# ==========================================================
+# CONSULTAR TODOS LOS RESPALDOS
+# ==========================================================
+
 @router.get("/")
 def obtener_respaldos(db: Session = Depends(get_db)):
+
+    # Consultamos todos los registros de respaldos.
     respaldos = db.query(Respaldo).all()
 
-    # Convierte los registros en objetos que FastAPI devuelve como JSON.
+    # Convertimos los registros a una lista de objetos JSON.
     return [
         {
             "id": respaldo.id,
@@ -37,13 +100,24 @@ def obtener_respaldos(db: Session = Depends(get_db)):
     ]
 
 
-# Registra un respaldo nuevo en PostgreSQL.
+# ==========================================================
+# REGISTRAR UN RESPALDO MANUALMENTE
+# ==========================================================
+
 @router.post("/")
 def crear_respaldo(
     datos: RespaldoCreate,
     db: Session = Depends(get_db)
 ):
-    # Construye el respaldo con los datos recibidos.
+
+    # Validamos que el equipo exista.
+    validar_equipo(datos.equipo_id, db)
+
+    # Validamos el servidor cuando se proporciona uno.
+    if datos.servidor_id is not None:
+        validar_servidor(datos.servidor_id, db)
+
+    # Construimos el registro con los datos recibidos.
     nuevo_respaldo = Respaldo(
         equipo_id=datos.equipo_id,
         servidor_id=datos.servidor_id,
@@ -55,32 +129,29 @@ def crear_respaldo(
         detalles_error=datos.detalles_error,
     )
 
-    # Agrega el respaldo a la sesión de SQLAlchemy.
-    db.add(nuevo_respaldo)
-
     try:
-        # Intenta guardar el respaldo en PostgreSQL.
+        # Agregamos el respaldo a la sesión.
+        db.add(nuevo_respaldo)
+
+        # Guardamos el registro en PostgreSQL.
         db.commit()
 
-        # Recupera el ID y la fecha generados por la base de datos.
+        # Recuperamos los datos guardados.
         db.refresh(nuevo_respaldo)
 
     except IntegrityError:
-        # Revierte la transacción si se incumple una restricción,
-        # por ejemplo, si el equipo o servidor no existen.
+        # Revertimos los cambios si ocurre un error.
         db.rollback()
 
-        # Devuelve un error controlado en lugar de un error interno 500.
         raise HTTPException(
             status_code=400,
             detail=(
                 "No se pudo registrar el respaldo. "
-                "Verifica que el equipo exista y que, si proporcionaste "
-                "un servidor, también exista. Comprueba que los datos sean válidos."
-            ),
+                "Verifica que los datos sean válidos."
+            )
         )
 
-    # Devuelve los datos del respaldo registrado correctamente.
+    # Devolvemos los datos del respaldo registrado.
     return {
         "id": nuevo_respaldo.id,
         "equipo_id": nuevo_respaldo.equipo_id,
@@ -92,4 +163,63 @@ def crear_respaldo(
         "dispositivo_externo": nuevo_respaldo.dispositivo_externo,
         "ruta_destino": nuevo_respaldo.ruta_destino,
         "detalles_error": nuevo_respaldo.detalles_error,
+    }
+
+
+# ==========================================================
+# EJECUTAR UN RESPALDO AUTOMÁTICO DE POSTGRESQL
+# ==========================================================
+
+@router.post("/ejecutar")
+def ejecutar_respaldo(
+    equipo_id: int,
+    servidor_id: int | None = None,
+    db: Session = Depends(get_db)
+):
+
+    # Validamos que el equipo relacionado exista.
+    validar_equipo(equipo_id, db)
+
+    # Validamos el servidor cuando se proporciona uno.
+    if servidor_id is not None:
+        validar_servidor(servidor_id, db)
+
+    try:
+        # Ejecutamos el servicio que genera el archivo .backup.
+        # El servicio también registra el resultado de la operación.
+        respaldo = ejecutar_respaldo_postgres(
+            db=db,
+            equipo_id=equipo_id,
+            servidor_id=servidor_id,
+        )
+
+    except Exception:
+        # Revertimos la transacción si ocurre un error al registrar.
+        db.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Ocurrió un error al ejecutar o registrar "
+                "el respaldo automático."
+            )
+        )
+
+    # Devolvemos el resultado de la operación.
+    return {
+        "mensaje": (
+            "Respaldo generado correctamente."
+            if respaldo.resultado == "Exitoso"
+            else "El respaldo no pudo completarse."
+        ),
+        "id": respaldo.id,
+        "equipo_id": respaldo.equipo_id,
+        "servidor_id": respaldo.servidor_id,
+        "fecha_hora": respaldo.fecha_hora,
+        "tipo_respaldo": respaldo.tipo_respaldo,
+        "tamanio_mb": respaldo.tamanio_mb,
+        "resultado": respaldo.resultado,
+        "dispositivo_externo": respaldo.dispositivo_externo,
+        "ruta_destino": respaldo.ruta_destino,
+        "detalles_error": respaldo.detalles_error,
     }

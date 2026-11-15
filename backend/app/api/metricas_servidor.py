@@ -8,11 +8,15 @@ from sqlalchemy.orm import Session
 # Permite identificar errores de integridad de la base de datos.
 from sqlalchemy.exc import IntegrityError
 
+# Permite registrar errores durante el envío de correos.
+import logging
+
 # Importa la dependencia que proporciona la sesión de la base de datos.
 from app.database.dependencies import get_db
 
-# Importa el modelo de las métricas de los servidores.
+# Importa los modelos de métricas y servidores.
 from app.models.metrica_servidor import MetricaServidor
+from app.models.servidor import Servidor
 
 # Importa el esquema que valida los datos recibidos.
 from app.schemas.metrica_servidor import MetricaServidorCreate
@@ -21,6 +25,13 @@ from app.schemas.metrica_servidor import MetricaServidorCreate
 from app.services.alertas_automaticas import (
     revisar_metricas_y_generar_alertas,
 )
+
+# Importa el servicio encargado de enviar correos electrónicos.
+from app.services.correo import enviar_correo_alerta
+
+
+# Configura el registro de errores de este módulo.
+logger = logging.getLogger(__name__)
 
 
 # Define las rutas relacionadas con las métricas de los servidores.
@@ -60,6 +71,9 @@ def crear_metrica(
     datos: MetricaServidorCreate,
     db: Session = Depends(get_db),
 ):
+    # Aquí guardaremos las alertas creadas por esta medición.
+    alertas_nuevas = []
+
     try:
         # Busca la medición anterior del mismo servidor.
         # Es importante hacerlo antes de insertar la nueva medición.
@@ -76,7 +90,7 @@ def crear_metrica(
         )
 
         # Si existe una medición anterior, prepara sus valores
-        # para que el servicio pueda compararlos con los actuales.
+        # para compararlos con los actuales.
         metricas_anteriores = None
 
         if metrica_anterior is not None:
@@ -110,8 +124,7 @@ def crear_metrica(
         # Añade la medición a la transacción actual.
         db.add(nueva_metrica)
 
-        # Envía los valores actuales al servicio de alertas.
-        # El servicio añade las alertas a la misma transacción.
+        # Prepara los valores actuales para revisar los umbrales.
         metricas_actuales = {
             "cpu_uso_porcentaje": datos.cpu_uso_porcentaje,
             "ram_uso_porcentaje": datos.ram_uso_porcentaje,
@@ -122,15 +135,15 @@ def crear_metrica(
             "latencia_ms": datos.latencia_ms,
         }
 
-        # Revisa los umbrales y prepara las alertas necesarias.
-        revisar_metricas_y_generar_alertas(
+        # Revisa los umbrales y obtiene las alertas que se generaron.
+        alertas_nuevas = revisar_metricas_y_generar_alertas(
             db=db,
             servidor_id=datos.servidor_id,
             metricas=metricas_actuales,
             metricas_anteriores=metricas_anteriores,
         )
 
-        # Confirma la medición y sus alertas en una sola transacción.
+        # Guarda la medición y todas sus alertas en una sola transacción.
         db.commit()
 
         # Recupera los valores generados por PostgreSQL.
@@ -152,13 +165,111 @@ def crear_metrica(
         # Revierte la transacción si ocurre otro error.
         db.rollback()
 
-        # Registra el detalle en la terminal para facilitar la revisión.
-        print(f"Error al registrar la métrica o sus alertas: {error}")
+        # Registra el detalle para facilitar la revisión.
+        logger.exception(
+            "Error al registrar la métrica o sus alertas: %s",
+            error,
+        )
 
         raise HTTPException(
             status_code=500,
             detail="Ocurrió un error al registrar la métrica y sus alertas.",
         )
+
+    # ---------------------------------------------------------
+    # ENVÍO AGRUPADO DE CORREOS
+    # ---------------------------------------------------------
+
+    # Solo intenta enviar un correo si se generaron alertas nuevas.
+    if alertas_nuevas:
+
+        try:
+            # Busca el nombre del servidor relacionado con las alertas.
+            servidor = db.query(Servidor).filter(
+                Servidor.id == datos.servidor_id
+            ).first()
+
+            # Si no se encuentra el nombre, utiliza el identificador.
+            nombre_servidor = (
+                servidor.nombre_host
+                if servidor
+                else f"Servidor ID {datos.servidor_id}"
+            )
+
+            # Construye el contenido del correo con todas las alertas.
+            detalles_alertas = []
+
+            for alerta in alertas_nuevas:
+                detalles_alertas.append(
+                    f"""
+Métrica: {alerta.metrica_afectada or 'No especificada'}
+Valor: {alerta.valor_registrado or 'No especificado'}
+Nivel: {alerta.nivel_alerta or 'Sin clasificar'}
+Descripción: {alerta.mensaje or 'Sin descripción'}
+"""
+                )
+
+            # Agrupa todas las alertas en un solo mensaje.
+            asunto = (
+                f"Alertas de monitoreo - {nombre_servidor} "
+                f"({len(alertas_nuevas)} alertas)"
+            )
+
+            mensaje = f"""
+BITÁCORA DE SOPORTE TÉCNICO Y MONITOREO
+
+Se detectaron nuevas alertas durante la medición de un servidor.
+
+Servidor: {nombre_servidor}
+Identificador: {datos.servidor_id}
+
+ALERTAS DETECTADAS:
+{"".join(detalles_alertas)}
+
+Se recomienda revisar el estado del servidor
+y atender las condiciones reportadas.
+
+Este mensaje fue generado automáticamente
+por el sistema de monitoreo.
+"""
+
+            # Intenta enviar un único correo con todas las alertas.
+            correo_enviado = enviar_correo_alerta(
+                asunto=asunto,
+                mensaje=mensaje,
+            )
+
+            # Solo marca las alertas como enviadas si el correo tuvo éxito.
+            if correo_enviado:
+                for alerta in alertas_nuevas:
+                    alerta.correo_enviado = True
+
+                # Guarda el estado de envío de cada alerta.
+                db.commit()
+
+                logger.info(
+                    "Se enviaron %s alertas agrupadas del servidor %s.",
+                    len(alertas_nuevas),
+                    datos.servidor_id,
+                )
+
+            else:
+                # Las alertas permanecen registradas como pendientes.
+                logger.warning(
+                    "No se pudo enviar el correo del servidor %s. "
+                    "Las alertas permanecen pendientes.",
+                    datos.servidor_id,
+                )
+
+        except Exception:
+            # Un error de correo no debe afectar la medición ya guardada.
+            db.rollback()
+
+            logger.exception(
+                "Error durante el envío o actualización del correo "
+                "del servidor %s.",
+                datos.servidor_id,
+            )
 
     # Devuelve la medición guardada correctamente.
     return {

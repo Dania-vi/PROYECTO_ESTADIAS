@@ -12,6 +12,8 @@ from app.models.servidor import Servidor
 from app.models.metrica_servidor import MetricaServidor
 from app.models.respaldo import Respaldo
 from app.models.alerta import Alerta
+# Importamos el modelo de historial para registrar sus eventos.
+from app.models.historial import Historial
 
 
 # Función encargada de crear las tablas de la base de datos.

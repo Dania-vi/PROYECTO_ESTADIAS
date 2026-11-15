@@ -71,6 +71,13 @@ const opcionesGrafica = {
     },
   },
   scales: {
+    x: {
+      ticks: {
+        autoSkip: true,
+        maxTicksLimit: 8,
+        maxRotation: 0,
+      },
+    },
     y: {
       beginAtZero: true,
       min: 0,
@@ -105,6 +112,7 @@ const opcionesGrafica = {
   background-color: white;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
 }
 
 /* Título de la gráfica. */

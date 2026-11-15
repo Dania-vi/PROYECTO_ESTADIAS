@@ -35,7 +35,7 @@ import Header from './components/layout/Header.vue'
 
 body {
   margin: 0;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "Segoe UI", Arial, Helvetica, sans-serif;
   background-color: #f1f5f9;
 }
 

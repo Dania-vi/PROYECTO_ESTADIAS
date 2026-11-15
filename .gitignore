@@ -25,3 +25,10 @@ Thumbs.db
 
 # Cola local de metricas pendientes del agente
 agente_monitoreo/metricas_pendientes.jsonl
+
+# Archivos y carpetas de respaldos de bases de datos
+backups/
+*.backup
+
+# Archivos de registro locales
+*.log

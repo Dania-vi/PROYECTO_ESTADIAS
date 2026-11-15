@@ -5,14 +5,15 @@ import { obtenerDatos } from '../services/api'
 
 // Importamos el componente reutilizable de gráficas.
 import MetricChart from '../components/dashboard/MetricChart.vue'
+import EstadoBadge from '../components/ui/EstadoBadge.vue'
 
 // Estructura de los datos de cada servidor.
 interface Servidor {
   id: number
   nombre_host: string
-  direccion_ip: string
-  sistema_operativo: string
-  estado_actual: string
+  direccion_ip: string | null
+  sistema_operativo: string | null
+  estado_actual: string | null
   ultima_conexion: string | null
 }
 
@@ -37,10 +38,10 @@ interface Alerta {
   respaldo_id: number | null
   fecha_hora: string
   tipo_alerta: string
-  metrica_afectada: string
-  valor_registrado: string
-  nivel_alerta: string
-  mensaje: string
+  metrica_afectada: string | null
+  valor_registrado: string | null
+  nivel_alerta: string | null
+  mensaje: string | null
   correo_enviado: boolean
 }
 
@@ -181,10 +182,45 @@ const metricasParaGraficas = computed(() => {
   return [...metricasFiltradasPorPeriodo.value].reverse()
 })
 
-// Genera las etiquetas de tiempo para el eje horizontal.
+// Indica si el periodo visible abarca más de un día.
+const periodoCruzaDia = computed(() => {
+  const mediciones = metricasParaGraficas.value
+
+  if (mediciones.length < 2) {
+    return false
+  }
+
+  const inicio = new Date(mediciones[0]!.fecha_hora)
+  const fin = new Date(mediciones[mediciones.length - 1]!.fecha_hora)
+
+  return inicio.toDateString() !== fin.toDateString()
+})
+
+// En 24 horas del mismo día basta la hora. En el resto, fecha y hora.
+const etiquetasIncluyenFecha = computed(() => {
+  return periodoSeleccionado.value !== '24h' || periodoCruzaDia.value
+})
+
+// Genera las etiquetas del eje horizontal.
 const etiquetasGraficas = computed(() => {
-  return metricasParaGraficas.value.map(metrica => {
-    return new Date(metrica.fecha_hora).toLocaleTimeString('es-MX', {
+  return metricasParaGraficas.value.map((metrica) => {
+    const fecha = new Date(metrica.fecha_hora)
+
+    if (Number.isNaN(fecha.getTime())) {
+      return metrica.fecha_hora
+    }
+
+    if (!etiquetasIncluyenFecha.value) {
+      return fecha.toLocaleTimeString('es-MX', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    }
+
+    return fecha.toLocaleString('es-MX', {
+      day: '2-digit',
+      month: '2-digit',
+      year: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
     })
@@ -227,6 +263,28 @@ function formatearValor(
 // Convierte fechas a un formato legible.
 function formatearFecha(fecha: string): string {
   return new Date(fecha).toLocaleString('es-MX')
+}
+
+// Clasifica el nivel sin asumir que el texto siempre existe.
+function clasificarNivel(
+  nivel: string | null,
+): 'problema' | 'advertencia' | 'neutro' {
+  const valor = (nivel ?? '').trim().toLowerCase()
+
+  if (valor === 'problema') {
+    return 'problema'
+  }
+
+  if (valor === 'advertencia') {
+    return 'advertencia'
+  }
+
+  return 'neutro'
+}
+
+function textoNivel(nivel: string | null): string {
+  const valor = (nivel ?? '').trim()
+  return valor || 'Sin nivel'
 }
 
 // Obtiene el nombre del servidor de una alerta.
@@ -294,8 +352,19 @@ onMounted(() => {
 
     <!-- Encabezado del Dashboard. -->
     <section class="dashboard-intro">
-      <h1>Resumen general</h1>
-      <p>Consulta el estado y las mediciones registradas de tus servidores.</p>
+      <div>
+        <h1>Resumen general</h1>
+        <p>Consulta el estado y las mediciones registradas de tus servidores.</p>
+      </div>
+
+      <button
+        type="button"
+        class="refresh-button"
+        :disabled="cargando"
+        @click="cargarDatos"
+      >
+        {{ cargando ? 'Actualizando...' : 'Actualizar' }}
+      </button>
     </section>
 
     <!-- Selector del servidor. -->
@@ -317,27 +386,35 @@ onMounted(() => {
       </select>
     </section>
 
-    <!-- Mensajes de carga y error. -->
-    <p v-if="cargando" class="loading-message">
-      Cargando información...
+    <!-- Carga inicial, error sin datos o aviso al actualizar. -->
+    <p v-if="cargando && servidores.length === 0" class="state-card">
+      Cargando información del dashboard...
     </p>
 
-    <p v-if="errorCarga" class="error-message">
+    <div
+      v-else-if="errorCarga && servidores.length === 0"
+      class="state-card state-card-error"
+    >
+      <p>{{ errorCarga }}</p>
+      <button type="button" class="refresh-button" @click="cargarDatos">
+        Reintentar
+      </button>
+    </div>
+
+    <p v-else-if="errorCarga" class="error-message">
       {{ errorCarga }}
     </p>
 
-    <template v-if="!cargando && !errorCarga">
+    <template v-if="servidores.length > 0 || (!cargando && !errorCarga)">
 
       <!-- Información del servidor seleccionado. -->
       <section v-if="servidorActual" class="selected-server">
         <div>
           <h2>{{ servidorActual.nombre_host }}</h2>
-          <p>{{ servidorActual.direccion_ip }}</p>
+          <p>{{ servidorActual.direccion_ip || 'Sin dirección IP' }}</p>
         </div>
 
-        <span class="server-status">
-          {{ servidorActual.estado_actual }}
-        </span>
+        <EstadoBadge :estado="servidorActual.estado_actual" />
       </section>
 
       <!-- Tarjetas con las últimas métricas. -->
@@ -463,13 +540,11 @@ onMounted(() => {
           >
             <div class="server-information">
               <strong>{{ servidor.nombre_host }}</strong>
-              <span>{{ servidor.direccion_ip }}</span>
-              <span>{{ servidor.sistema_operativo }}</span>
+              <span>{{ servidor.direccion_ip || 'Sin registro' }}</span>
+              <span>{{ servidor.sistema_operativo || 'Sin registro' }}</span>
             </div>
 
-            <span class="server-status">
-              {{ servidor.estado_actual }}
-            </span>
+            <EstadoBadge :estado="servidor.estado_actual" />
           </article>
         </div>
 
@@ -497,28 +572,25 @@ onMounted(() => {
             v-for="alerta in alertasDelServidor"
             :key="alerta.id"
             class="alert-item"
+            :class="`nivel-${clasificarNivel(alerta.nivel_alerta)}`"
           >
             <div class="alert-information">
               <div class="alert-title">
-                <strong>{{ alerta.metrica_afectada }}</strong>
+                <strong>{{ alerta.metrica_afectada || 'Sin métrica' }}</strong>
 
                 <span
                   class="alert-level"
-                  :class="
-                    alerta.nivel_alerta.toLowerCase() === 'problema'
-                      ? 'alert-level-problem'
-                      : 'alert-level-warning'
-                  "
+                  :class="`alert-level-${clasificarNivel(alerta.nivel_alerta)}`"
                 >
-                  {{ alerta.nivel_alerta }}
+                  {{ textoNivel(alerta.nivel_alerta) }}
                 </span>
               </div>
 
-              <p>{{ alerta.mensaje }}</p>
+              <p>{{ alerta.mensaje || 'Sin mensaje' }}</p>
 
               <div class="alert-metadata">
                 <span>{{ obtenerNombreServidor(alerta.servidor_id) }}</span>
-                <span>Valor: {{ alerta.valor_registrado }}</span>
+                <span>Valor: {{ alerta.valor_registrado || 'Sin valor' }}</span>
                 <span>{{ formatearFecha(alerta.fecha_hora) }}</span>
               </div>
             </div>
@@ -547,6 +619,13 @@ onMounted(() => {
   gap: 25px;
 }
 
+.dashboard-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
 .dashboard-intro h1 {
   margin: 0 0 8px;
   color: #1e293b;
@@ -571,6 +650,27 @@ onMounted(() => {
   font-weight: 600;
 }
 
+.refresh-button {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.refresh-button:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.refresh-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 .server-select,
 .period-select {
   min-width: 240px;
@@ -589,10 +689,34 @@ onMounted(() => {
 }
 
 .error-message {
-  color: #b91c1c;
+  margin: 0;
+  color: #991b1b;
   background: #fee2e2;
-  padding: 12px;
+  padding: 12px 14px;
   border-radius: 8px;
+}
+
+.state-card {
+  margin: 0;
+  padding: 22px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  color: #64748b;
+}
+
+.state-card-error {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  color: #991b1b;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.state-card-error p {
+  margin: 0;
 }
 
 /* Información del servidor seleccionado. */
@@ -605,6 +729,7 @@ onMounted(() => {
   background: white;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
 }
 
 .selected-server h2 {
@@ -616,17 +741,6 @@ onMounted(() => {
 .selected-server p {
   margin: 0;
   color: #64748b;
-}
-
-/* Estado de los servidores. */
-.server-status {
-  padding: 6px 10px;
-  border-radius: 20px;
-  background: #dcfce7;
-  color: #166534;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
 }
 
 /* Encabezados de las secciones. */
@@ -670,6 +784,7 @@ onMounted(() => {
   background: white;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
 }
 
 .metric-card h3 {
@@ -694,6 +809,7 @@ onMounted(() => {
   background: white;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
 }
 
 .details-section h2,
@@ -840,18 +956,27 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.alert-level-warning {
+.alert-level-advertencia {
   background: #fef3c7;
   color: #92400e;
 }
 
-.alert-level-problem {
+.alert-level-problema {
   background: #fee2e2;
   color: #991b1b;
 }
 
-.alert-item:has(.alert-level-problem) {
+.alert-level-neutro {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.nivel-problema {
   border-left-color: #dc2626;
+}
+
+.nivel-neutro {
+  border-left-color: #94a3b8;
 }
 
 .alert-metadata {
@@ -897,8 +1022,15 @@ onMounted(() => {
     flex-direction: column;
   }
 
+  .dashboard-intro,
+  .state-card-error {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .server-select,
-  .period-select {
+  .period-select,
+  .refresh-button {
     width: 100%;
   }
 }
